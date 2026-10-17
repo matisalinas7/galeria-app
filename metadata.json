@@ -1,0 +1,6 @@
+{
+  "name": "Lumina AI Studio",
+  "description": "Estudio fotográfico minimalista con filtros automáticos por inteligencia artificial, galería pública abierta y descargas gratuitas en alta resolución.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
