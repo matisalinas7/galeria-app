@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "Photo": {
+      "title": "Photo",
+      "description": "A public photo shared with friends with an applied optical filter.",
+      "type": "object",
+      "properties": {
+        "visibility": {
+          "type": "string",
+          "description": "Visibility of the photo, always set to 'public'",
+          "enum": ["public"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the photo",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "authorAlias": {
+          "type": "string",
+          "description": "Name or nickname of the friend who uploaded the photo",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "filterName": {
+          "type": "string",
+          "description": "Name of the optical filter applied",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "originalDataUrl": {
+          "type": "string",
+          "description": "Compressed JPEG data URL of the original image",
+          "minLength": 20,
+          "maxLength": 420000
+        },
+        "processedDataUrl": {
+          "type": "string",
+          "description": "Compressed JPEG data URL of the filtered image",
+          "minLength": 20,
+          "maxLength": 420000
+        },
+        "width": {
+          "type": "integer",
+          "description": "Image width in pixels"
+        },
+        "height": {
+          "type": "integer",
+          "description": "Image height in pixels"
+        },
+        "downloads": {
+          "type": "integer",
+          "description": "Number of times the photo was downloaded"
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "description": "Creation epoch timestamp in milliseconds for sorting"
+        }
+      },
+      "required": [
+        "visibility",
+        "title",
+        "authorAlias",
+        "filterName",
+        "originalDataUrl",
+        "processedDataUrl",
+        "width",
+        "height",
+        "downloads",
+        "createdAtMs"
+      ]
+    }
+  },
+  "firestore": {
+    "/photos/{photoId}": {
+      "schema": {
+        "$ref": "#/entities/Photo"
+      },
+      "description": "Public shared photos collection accessible without login."
+    }
+  }
+}

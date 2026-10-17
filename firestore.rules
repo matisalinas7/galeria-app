@@ -1,0 +1,88 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidPhoto(data) {
+      return data.keys().hasAll([
+        'visibility',
+        'title',
+        'authorAlias',
+        'filterName',
+        'originalDataUrl',
+        'processedDataUrl',
+        'width',
+        'height',
+        'downloads',
+        'createdAtMs'
+      ]) &&
+      data.keys().hasOnly([
+        'visibility',
+        'title',
+        'authorAlias',
+        'filterName',
+        'originalDataUrl',
+        'processedDataUrl',
+        'width',
+        'height',
+        'downloads',
+        'createdAtMs',
+        'grading'
+      ]) &&
+      data.visibility == 'public' &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+      data.authorAlias is string && data.authorAlias.size() >= 1 && data.authorAlias.size() <= 40 &&
+      data.filterName is string && data.filterName.size() >= 1 && data.filterName.size() <= 50 &&
+      data.originalDataUrl is string && data.originalDataUrl.size() >= 20 && data.originalDataUrl.size() <= 420000 &&
+      data.processedDataUrl is string && data.processedDataUrl.size() >= 20 && data.processedDataUrl.size() <= 420000 &&
+      data.width is int && data.width >= 1 && data.width <= 10000 &&
+      data.height is int && data.height >= 1 && data.height <= 10000 &&
+      data.downloads is int && data.downloads >= 0 &&
+      data.createdAtMs is int && data.createdAtMs > 0;
+    }
+
+    // Public shared photo gallery
+    match /photos/{photoId} {
+      allow get: if isValidId(photoId) && resource.data.visibility == 'public';
+      allow list: if resource.data.visibility == 'public';
+
+      allow create: if isValidId(photoId) &&
+        isValidPhoto(incoming()) &&
+        incoming().downloads == 0;
+
+      allow update: if isValidId(photoId) &&
+        isValidPhoto(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['downloads']) &&
+        incoming().downloads == existing().downloads + 1 &&
+        incoming().visibility == existing().visibility &&
+        incoming().createdAtMs == existing().createdAtMs &&
+        incoming().title == existing().title &&
+        incoming().authorAlias == existing().authorAlias &&
+        incoming().originalDataUrl == existing().originalDataUrl &&
+        incoming().processedDataUrl == existing().processedDataUrl;
+
+      allow delete: if false;
+    }
+
+    // Connection test path
+    match /test/{docId} {
+      allow get: if isValidId(docId);
+    }
+  }
+}

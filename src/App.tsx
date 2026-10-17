@@ -10,32 +10,25 @@ import {
   RotateCcw,
 } from "lucide-react";
 import {
-  ColorGradingParams,
   CURATED_OPTICAL_PRESETS,
   renderGradedImageToCanvas,
   exportHighResDataUrl,
 } from "./utils/colorEngine";
-
-interface PublicPhotoItem {
-  id: string;
-  title: string;
-  authorAlias: string;
-  filterName: string;
-  originalDataUrl: string;
-  processedDataUrl: string;
-  width: number;
-  height: number;
-  grading: ColorGradingParams;
-  createdAt: string;
-  downloads: number;
-}
+import {
+  PublicPhotoItem,
+  DEFAULT_SEED_GALLERY,
+  subscribeToPublicGallery,
+  publishPhotoItem,
+  incrementPhotoDownload,
+  renderCompressedCloudDataUrl,
+} from "./utils/galleryStorage";
 
 export default function App() {
-  const [gallery, setGallery] = useState<PublicPhotoItem[]>([]);
+  const [gallery, setGallery] = useState<PublicPhotoItem[]>(DEFAULT_SEED_GALLERY);
   const [lightboxItem, setLightboxItem] = useState<PublicPhotoItem | null>(null);
   const [lightboxShowOriginal, setLightboxShowOriginal] = useState<boolean>(false);
 
-  // Editor state (opens when user selects/drops a photo or clicks one to edit)
+  // Editor state (opens when user selects/drops a photo)
   const [activeImageSrc, setActiveImageSrc] = useState<string | null>(null);
   const [loadedImageEl, setLoadedImageEl] = useState<HTMLImageElement | null>(null);
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number }>({
@@ -64,22 +57,12 @@ export default function App() {
     }, 3200);
   }, []);
 
-  // Load shared gallery on mount
+  // Subscribe to real-time Firestore public gallery on mount (works on Netlify and everywhere)
   useEffect(() => {
-    async function fetchGallery() {
-      try {
-        const res = await fetch("/api/gallery");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.items)) {
-            setGallery(data.items);
-          }
-        }
-      } catch (err) {
-        console.error("Error loading gallery:", err);
-      }
-    }
-    fetchGallery();
+    const unsubscribe = subscribeToPublicGallery((items) => {
+      setGallery(items);
+    });
+    return () => unsubscribe();
   }, []);
 
   // Load image element when user uploads or selects a photo
@@ -89,7 +72,6 @@ export default function App() {
       return;
     }
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       setLoadedImageEl(img);
       setImageDimensions({
@@ -173,50 +155,40 @@ export default function App() {
     }, 40);
   };
 
-  // Publish to shared gallery
+  // Publish to cloud Firestore gallery (works on Netlify static and everywhere)
   const handlePublish = async () => {
     if (!loadedImageEl || isPublishing) return;
     setIsPublishing(true);
     try {
-      const offscreenOrig = document.createElement("canvas");
-      renderGradedImageToCanvas(loadedImageEl, offscreenOrig, currentPreset.grading, 0, 1920);
-      const originalDataUrl = offscreenOrig.toDataURL("image/jpeg", 0.88);
-
-      const offscreenProcessed = document.createElement("canvas");
-      const { width, height } = renderGradedImageToCanvas(
+      const origCompressed = renderCompressedCloudDataUrl(
         loadedImageEl,
-        offscreenProcessed,
         currentPreset.grading,
-        intensity,
-        1920
+        0
       );
-      const processedDataUrl = offscreenProcessed.toDataURL("image/jpeg", 0.92);
+      const processedCompressed = renderCompressedCloudDataUrl(
+        loadedImageEl,
+        currentPreset.grading,
+        intensity
+      );
 
-      const res = await fetch("/api/gallery", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: photoTitle.trim() || "Momento compartido",
-          authorAlias: authorAlias.trim() || "Anónimo",
-          filterName: intensity === 0 ? "Original" : currentPreset.name,
-          originalDataUrl,
-          processedDataUrl,
-          width,
-          height,
-          grading: currentPreset.grading,
-        }),
+      const savedItem = await publishPhotoItem({
+        title: photoTitle.trim() || "Momento compartido",
+        authorAlias: authorAlias.trim() || "Amigo",
+        filterName: intensity === 0 ? "Original" : currentPreset.name,
+        originalDataUrl: origCompressed.dataUrl,
+        processedDataUrl: processedCompressed.dataUrl,
+        width: imageDimensions.width,
+        height: imageDimensions.height,
+        grading: currentPreset.grading,
       });
 
-      if (res.ok) {
-        const { item } = await res.json();
-        setGallery((prev) => [item, ...prev]);
-        setActiveImageSrc(null);
-        setPhotoTitle("");
-        triggerToast("Foto subida a la galería");
-      }
+      setGallery((prev) => [savedItem, ...prev.filter((i) => i.id !== savedItem.id)]);
+      setActiveImageSrc(null);
+      setPhotoTitle("");
+      triggerToast("Foto subida a la galería compartida");
     } catch (err) {
       console.error(err);
-      triggerToast("No se pudo subir la foto.");
+      triggerToast("No se pudo subir la foto. Intenta con otra imagen.");
     } finally {
       setIsPublishing(false);
     }
@@ -224,13 +196,12 @@ export default function App() {
 
   // Download any photo from the gallery in full resolution
   const handleDownloadGalleryItem = (item: PublicPhotoItem) => {
-    fetch(`/api/gallery/${item.id}/download`, { method: "POST" }).catch(() => {});
+    incrementPhotoDownload(item);
     setGallery((prev) =>
       prev.map((g) => (g.id === item.id ? { ...g, downloads: g.downloads + 1 } : g))
     );
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       const { dataUrl, width, height } = exportHighResDataUrl(
         img,
@@ -272,15 +243,15 @@ export default function App() {
         </nav>
 
         <div className="flex items-center shrink-0">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
+          <label
+            htmlFor="photo-upload-input"
             className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Subir Imagen</span>
-          </button>
+          </label>
           <input
+            id="photo-upload-input"
             ref={fileInputRef}
             type="file"
             accept="image/*"
@@ -306,24 +277,23 @@ export default function App() {
         {/* Upload & Filter Section */}
         <section id="subir" className="mb-12">
           {!activeImageSrc ? (
-            /* Compact & Direct Upload Box */
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full py-10 px-6 bg-[#121215] hover:bg-zinc-900/90 border border-dashed border-zinc-700 hover:border-blue-500 rounded-2xl transition-colors cursor-pointer flex flex-col items-center justify-center text-center gap-3"
-            >
-              <div className="w-11 h-11 rounded-full bg-zinc-800/80 text-zinc-200 flex items-center justify-center">
-                <Upload className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-white">
-                  Sube una foto para aplicarle filtros y compartirla con tus amigos
-                </p>
-                <p className="text-xs text-zinc-400 mt-1">
-                  Arrastra una imagen aquí o haz clic para elegir de tu dispositivo · Sin cuenta y en alta resolución
-                </p>
-              </div>
+            <div onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+              <label
+                htmlFor="photo-upload-input"
+                className="w-full py-10 px-6 bg-[#121215] hover:bg-zinc-900/90 border border-dashed border-zinc-700 hover:border-blue-500 rounded-2xl transition-colors cursor-pointer flex flex-col items-center justify-center text-center gap-3"
+              >
+                <div className="w-11 h-11 rounded-full bg-zinc-800/80 text-zinc-200 flex items-center justify-center">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    Sube una foto para aplicarle filtros y compartirla con tus amigos
+                  </p>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    Arrastra una imagen aquí o toca para elegir de tu galería · Gratis y en alta resolución
+                  </p>
+                </div>
+              </label>
             </div>
           ) : (
             /* Active Simple Filter & Share Editor */
@@ -439,6 +409,7 @@ export default function App() {
                     type="text"
                     value={photoTitle}
                     onChange={(e) => setPhotoTitle(e.target.value)}
+                    maxLength={80}
                     placeholder="Título (ej. Asado del sábado)"
                     className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
                   />
@@ -446,6 +417,7 @@ export default function App() {
                     type="text"
                     value={authorAlias}
                     onChange={(e) => setAuthorAlias(e.target.value)}
+                    maxLength={40}
                     placeholder="Tu nombre (opcional)"
                     className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500"
                   />
